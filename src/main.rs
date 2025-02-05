@@ -1,6 +1,8 @@
 #![no_std]
 #![no_main]
 
+use critical_section as _;
+use defmt_rtt as _;
 use embedded_graphics::{
     geometry::AnchorPoint,
     pixelcolor::Rgb565,
@@ -12,7 +14,7 @@ use u8g2_fonts::types::{FontColor, HorizontalAlignment, VerticalPosition};
 mod app {
     use core::cell::RefCell;
 
-    use central_node::{SensorData, FONT0_NORMAL, FONT0_SMALL, FONT0_SMALLER};
+    use central_node::{SensorData, FONT0_NORMAL};
     use esp_backtrace as _;
     use esp_hal::{
         clock::CpuClock,
@@ -23,13 +25,13 @@ mod app {
         spi::{master::Spi, SpiMode},
         timer::{
             timg::{Timer, TimerGroup, TimerX},
-            OneShotTimer, PeriodicTimer,
+            OneShotTimer,
         },
         Blocking,
     };
-    use esp_println::println;
+    // use esp_println::println;
     use esp_wifi::{esp_now::EspNow, EspWifiController};
-    use fugit::{Duration, ExtU64, RateExtU32};
+    use fugit::{ExtU64, RateExtU32};
     use mipidsi::{
         interface::SpiInterface,
         models::ST7735s,
@@ -40,12 +42,12 @@ mod app {
     use embedded_hal_bus::spi::CriticalSectionDevice;
 
     use embedded_graphics::{geometry::AnchorPoint, pixelcolor::Rgb565, prelude::*};
-    use u8g2_fonts::types::{
-        FontColor::{Transparent, WithBackground},
-        HorizontalAlignment, VerticalPosition,
-    };
+    use u8g2_fonts::types::{FontColor::WithBackground, HorizontalAlignment, VerticalPosition};
 
     use crate::{render_received, render_time};
+
+    use rtic_monotonics::esp32c3::prelude::*;
+    esp32c3_systimer_monotonic!(Mono);
 
     static ESP_WIFI_CONTROLLER: StaticCell<EspWifiController> = StaticCell::new();
     static SPI_BUS: StaticCell<critical_section::Mutex<RefCell<Spi<Blocking>>>> = StaticCell::new();
@@ -54,8 +56,6 @@ mod app {
 
     #[shared]
     struct Shared {
-        // temp: f32,
-        // hum: f32,
         filament_box_sensor: SensorData<f32, 2>,
     }
 
@@ -76,7 +76,12 @@ mod app {
     }
 
     #[init]
-    fn init(_cx: init::Context) -> (Shared, Local) {
+    fn init(cx: init::Context) -> (Shared, Local) {
+        let timer = cx.device.SYSTIMER;
+        Mono::start(timer);
+        // let a = Mono::now().duration_since_epoch().to_micros();
+        defmt::timestamp!("{=u64:tus}", Mono::now().duration_since_epoch().to_micros());
+        defmt::info!("Setup");
         let mut config = esp_hal::Config::default();
         config.cpu_clock = CpuClock::Clock160MHz;
         let peripherals = esp_hal::init(config);
@@ -156,15 +161,22 @@ mod app {
         )
     }
 
+    // #[idle]
+    // fn idle(_cx: idle::Context) -> ! {
+    //     loop {
+    //         continue;
+    //     }
+    // }
+
     #[task(shared=[filament_box_sensor], local=[esp_now], priority=2)]
     async fn receiver(mut cx: receiver::Context) {
-        println!("Entering receiver task");
+        defmt::trace!("Entering receiver task");
         loop {
-            println!("waiting for message");
+            defmt::trace!("waiting for message");
             let response = cx.local.esp_now.receive_async().await;
 
             if let Ok([tmp, hum]) = central_node::parse_float(response.data()) {
-                println!("Temperature : {} - Humidity : {}", tmp, hum);
+                defmt::info!("Temperature : {} - Humidity : {}", tmp, hum);
                 let time = esp_hal::time::now();
                 let time = time.duration_since_epoch().to_secs();
                 cx.shared.filament_box_sensor.lock(|t| {
@@ -178,6 +190,7 @@ mod app {
 
     #[task(binds=TG1_T0_LEVEL ,shared=[filament_box_sensor],local=[display_timer, display0, delay], priority=3)]
     fn display_updater(mut cx: display_updater::Context) {
+        defmt::trace!("Updating display");
         cx.local.display_timer.clear_interrupt();
         let display0 = cx.local.display0;
         let time = esp_hal::time::now();

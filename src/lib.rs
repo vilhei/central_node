@@ -1,10 +1,8 @@
 #![no_std]
 #![no_main]
 
-use core::error::Error;
-
 use u8g2_fonts::{
-    fonts::{u8g2_font_6x13_mr, u8g2_font_crox3cb_mr, u8g2_font_inr16_mf, u8g2_font_inr21_mf},
+    fonts::{u8g2_font_6x13_mr, u8g2_font_inr16_mf, u8g2_font_inr21_mf},
     FontRenderer,
 };
 
@@ -35,7 +33,7 @@ pub fn parse_float<const N: usize>(buffer: &[u8]) -> Result<[f32; N], ParseFloat
         // So atleast N floats can be formed
         // This could be done with TryFrom array trait but with this way the data length is only checked once
         let mut res = [0.0; N];
-        for (idx, c) in buffer.chunks_exact(4).enumerate() {
+        for (idx, c) in buffer[..N * 4].chunks_exact(4).enumerate() {
             let ptr = c.as_ptr() as *const [u8; 4];
             res[idx] = f32::from_le_bytes(unsafe { *ptr });
         }
